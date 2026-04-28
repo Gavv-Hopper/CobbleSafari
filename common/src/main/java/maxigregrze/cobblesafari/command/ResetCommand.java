@@ -9,6 +9,7 @@ import maxigregrze.cobblesafari.config.SafariConfig;
 import maxigregrze.cobblesafari.config.SafariTimerConfig;
 import maxigregrze.cobblesafari.config.SecretBasePCConfig;
 import maxigregrze.cobblesafari.config.SpawnBoostConfig;
+import maxigregrze.cobblesafari.config.RandomizerItemsConfig;
 import maxigregrze.cobblesafari.data.DungeonPositionSavedData;
 import maxigregrze.cobblesafari.dungeon.DungeonConfig;
 import maxigregrze.cobblesafari.dungeon.DungeonDimensions;
@@ -90,6 +91,7 @@ public class ResetCommand {
         DimensionalBanConfig.load();
         MiscConfig.load();
         SecretBasePCConfig.load();
+        RandomizerItemsConfig.load();
 
         source.sendSuccess(() -> Component.translatable("cobblesafari.command.refresh.success"), true);
         CobbleSafari.LOGGER.info("All configs refreshed by {}", source.getTextName());
