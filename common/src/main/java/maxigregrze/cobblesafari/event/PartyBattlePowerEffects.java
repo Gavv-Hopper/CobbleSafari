@@ -45,48 +45,68 @@ public final class PartyBattlePowerEffects {
     private PartyBattlePowerEffects() {}
 
     public static void register() {
-        CobblemonEvents.BATTLE_STARTED_PRE.subscribe(Priority.LOWEST, (Consumer<BattleStartedEvent.Pre>) e -> {
-            onBattlePre(e);
-        });
+        CobblemonEvents.BATTLE_STARTED_PRE.subscribe(Priority.LOWEST, (Consumer<BattleStartedEvent.Pre>) PartyBattlePowerEffects::onBattlePre);
+        CobblemonEvents.BATTLE_STARTED_POST.subscribe(Priority.HIGH, (Consumer<BattleStartedEvent.Post>) PartyBattlePowerEffects::onBattlePost);
     }
 
     private static Unit onBattlePre(BattleStartedEvent.Pre event) {
         PokemonBattle battle = event.getBattle();
         Map<UUID, Map<Stat, Integer>> perPokemon = new HashMap<>();
         for (BattleActor actor : battle.getActors()) {
-            if (actor.getType() != ActorType.PLAYER) {
-                continue;
-            }
-            for (BattlePokemon bp : actor.getPokemonList()) {
-                Pokemon p = bp.getEffectedPokemon();
-                perPokemon.putIfAbsent(p.getUuid(), snapshot(p));
-            }
+            collectActorSnapshots(actor, perPokemon);
         }
-        if (perPokemon.isEmpty()) {
-            return Unit.INSTANCE;
-        }
-        SNAPSHOTS.put(battle.getBattleId(), perPokemon);
-        battle.getOnEndHandlers().add(b -> {
-            restoreBattle(b);
-            return Unit.INSTANCE;
-        });
-        for (BattleActor actor : battle.getActors()) {
-            if (actor.getType() != ActorType.PLAYER) {
-                continue;
-            }
-            ServerPlayer player = resolvePlayer(actor);
-            if (player == null) {
-                continue;
-            }
-            for (BattlePokemon bp : actor.getPokemonList()) {
-                Pokemon p = bp.getEffectedPokemon();
-                if (p.getOwnerPlayer() != player) {
-                    continue;
-                }
-                applyPowers(player, p);
-            }
+        if (!perPokemon.isEmpty()) {
+            SNAPSHOTS.put(battle.getBattleId(), perPokemon);
+            battle.getOnEndHandlers().add(b -> {
+                restoreBattle(b);
+                return Unit.INSTANCE;
+            });
         }
         return Unit.INSTANCE;
+    }
+
+    private static void collectActorSnapshots(BattleActor actor, Map<UUID, Map<Stat, Integer>> perPokemon) {
+        if (actor.getType() != ActorType.PLAYER) {
+            return;
+        }
+        ServerPlayer player = resolvePlayer(actor);
+        if (player == null || !hasAnyBattleEffect(player)) {
+            return;
+        }
+        for (BattlePokemon bp : actor.getPokemonList()) {
+            Pokemon p = bp.getEffectedPokemon();
+            if (p.getOwnerPlayer() == player) {
+                perPokemon.put(p.getUuid(), snapshot(p));
+                p.getEvs().doWithoutEmitting(() -> {
+                    applyPowers(player, p);
+                    return Unit.INSTANCE;
+                });
+            }
+        }
+    }
+
+    private static Unit onBattlePost(BattleStartedEvent.Post event) {
+        restoreBattle(event.getBattle());
+        return Unit.INSTANCE;
+    }
+
+    private static boolean hasAnyBattleEffect(ServerPlayer player) {
+        for (int lv = 1; lv <= 3; lv++) {
+            if (player.hasEffect(ModPowerEffects.attack(lv))
+                    || player.hasEffect(ModPowerEffects.defense(lv))
+                    || player.hasEffect(ModPowerEffects.spAtk(lv))
+                    || player.hasEffect(ModPowerEffects.spDef(lv))
+                    || player.hasEffect(ModPowerEffects.speed(lv))) {
+                return true;
+            }
+            for (int vi = 0; vi < PowerVariantRegistry.VARIANT_COUNT; vi++) {
+                if (player.hasEffect(ModPowerEffects.move(vi, lv))
+                        || player.hasEffect(ModPowerEffects.resistance(vi, lv))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     @Nullable
@@ -204,27 +224,28 @@ public final class PartyBattlePowerEffects {
     @Nullable
     private static Integer findTypedPowerLevel(ServerPlayer player, Pokemon pokemon, boolean move) {
         for (int lv = 3; lv >= 1; lv--) {
-            for (int vi = 0; vi < PowerVariantRegistry.ELEMENTAL_COUNT; vi++) {
-                if (!PowerVariantRegistry.pokemonHasVariantType(pokemon, vi)) {
-                    continue;
-                }
-                boolean has = move
-                        ? player.hasEffect(ModPowerEffects.move(vi, lv))
-                        : player.hasEffect(ModPowerEffects.resistance(vi, lv));
-                if (has) {
-                    return lv;
-                }
-            }
-            if (PowerVariantRegistry.pokemonHasVariantType(pokemon, PowerVariantRegistry.INDEX_ALL)) {
-                boolean has = move
-                        ? player.hasEffect(ModPowerEffects.move(PowerVariantRegistry.INDEX_ALL, lv))
-                        : player.hasEffect(ModPowerEffects.resistance(PowerVariantRegistry.INDEX_ALL, lv));
-                if (has) {
-                    return lv;
-                }
+            if (hasTypedEffectAtLevel(player, pokemon, lv, move)) {
+                return lv;
             }
         }
         return null;
+    }
+
+    private static boolean hasTypedEffectAtLevel(ServerPlayer player, Pokemon pokemon, int lv, boolean move) {
+        for (int vi = 0; vi < PowerVariantRegistry.ELEMENTAL_COUNT; vi++) {
+            if (PowerVariantRegistry.pokemonHasVariantType(pokemon, vi)
+                    && hasTypedEffect(player, vi, lv, move)) {
+                return true;
+            }
+        }
+        return PowerVariantRegistry.pokemonHasVariantType(pokemon, PowerVariantRegistry.INDEX_ALL)
+                && hasTypedEffect(player, PowerVariantRegistry.INDEX_ALL, lv, move);
+    }
+
+    private static boolean hasTypedEffect(ServerPlayer player, int vi, int lv, boolean move) {
+        return move
+                ? player.hasEffect(ModPowerEffects.move(vi, lv))
+                : player.hasEffect(ModPowerEffects.resistance(vi, lv));
     }
 
     private static void greedyBoostToMultiplier(Pokemon p, Stat stat, float targetMultiplier, SidemodEvSource src) {
